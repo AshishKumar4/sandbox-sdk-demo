@@ -14,6 +14,7 @@ import { git } from './routes/git';
 import { ports } from './routes/ports';
 import { metrics } from './routes/metrics';
 import { sandboxProxy } from './routes/sandbox-proxy';
+import { startupScripts } from './routes/startup-scripts';
 
 /**
  * Main Hono application
@@ -43,6 +44,7 @@ app.get('/health', (c) => {
  */
 app.route('/api/sandboxes', sandboxes);
 app.route('/api/metrics', metrics);
+app.route('/api/startup-scripts', startupScripts);
 
 /**
  * Sandbox-specific API routes

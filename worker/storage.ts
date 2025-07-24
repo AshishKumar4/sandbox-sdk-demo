@@ -1,5 +1,14 @@
 import type { SandboxState, CommandResult } from './types';
 
+interface StartupScript {
+  id: string
+  name: string
+  content: string
+  description?: string
+  createdAt: string
+  lastUsed?: string
+}
+
 /**
  * In-memory storage for demo purposes
  * In production, this would be replaced with Durable Objects or KV storage
@@ -7,6 +16,7 @@ import type { SandboxState, CommandResult } from './types';
 export class SandboxStorage {
   private sandboxes = new Map<string, SandboxState>();
   private commandHistory = new Map<string, CommandResult[]>();
+  private startupScripts = new Map<string, StartupScript>();
 
   getSandbox(id: string): SandboxState | undefined {
     return this.sandboxes.get(id);
@@ -58,6 +68,23 @@ export class SandboxStorage {
         sandbox.metrics.totalCommands;
       this.sandboxes.set(sandboxId, sandbox);
     }
+  }
+
+  // Startup Scripts methods
+  getStartupScript(id: string): StartupScript | undefined {
+    return this.startupScripts.get(id);
+  }
+
+  setStartupScript(id: string, script: StartupScript): void {
+    this.startupScripts.set(id, script);
+  }
+
+  deleteStartupScript(id: string): void {
+    this.startupScripts.delete(id);
+  }
+
+  getStartupScripts(): StartupScript[] {
+    return Array.from(this.startupScripts.values());
   }
 }
 

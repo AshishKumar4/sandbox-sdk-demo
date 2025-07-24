@@ -99,3 +99,7 @@ export interface FileInfo {
   type: 'file' | 'directory';
   lastModified: string;
 }
+
+export interface Env {
+  Sandbox: any;
+}

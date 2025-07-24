@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Play, Square, Trash2, ExternalLink, Eye, EyeOff, Plus } from 'lucide-react'
+import { Play, Square, ExternalLink, Eye, EyeOff, Plus, Terminal } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import type { SandboxEnvironment, RunningProcess, ExposedPort, ProcessApiResponse } from '@/types/sandbox'
 import { cn } from '@/lib/utils'
@@ -22,13 +23,60 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
   const [isExposePortOpen, setIsExposePortOpen] = useState(false)
   const [newProcessCommand, setNewProcessCommand] = useState('')
   const [newPortNumber, setNewPortNumber] = useState('')
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('custom')
+
+  const processTemplates = [
+    {
+      id: 'custom',
+      name: 'Custom Command',
+      description: 'Enter your own command',
+      command: ''
+    },
+    {
+      id: 'node-server',
+      name: 'Node.js Server',
+      description: 'Start a Node.js HTTP server on port 3000',
+      command: 'node -e "const http = require(\'http\'); const server = http.createServer((req, res) => { res.writeHead(200, {\'Content-Type\': \'application/json\'}); res.end(JSON.stringify({message: \'Hello from Node.js!\', timestamp: new Date().toISOString()})); }); server.listen(3000, () => console.log(\'Server running on port 3000\'))"'
+    },
+    {
+      id: 'python-server',
+      name: 'Python HTTP Server',
+      description: 'Start a Python HTTP server on port 8000',
+      command: 'python3 -m http.server 8000'
+    },
+    {
+      id: 'npm-dev',
+      name: 'npm run dev',
+      description: 'Start development server with npm',
+      command: 'npm run dev'
+    },
+    {
+      id: 'npm-start',
+      name: 'npm start',
+      description: 'Start application with npm',
+      command: 'npm start'
+    },
+    {
+      id: 'watch-logs',
+      name: 'Watch System Logs',
+      description: 'Monitor system logs in real-time',
+      command: 'tail -f /var/log/syslog || journalctl -f || echo "No system logs available"'
+    },
+    {
+      id: 'file-server',
+      name: 'File Server',
+      description: 'Serve current directory on port 8080',
+      command: 'python3 -m http.server 8080 || python -m SimpleHTTPServer 8080'
+    }
+  ]
 
   useEffect(() => {
-    const loadProcesses = async () => {
+    const loadData = async () => {
       try {
-        const response = await fetch(`/api/sandboxes/${sandbox.id}/processes`)
-        if (response.ok) {
-          const apiResponse = await response.json()
+        // Load processes
+        const processResponse = await fetch(`/api/sandboxes/${sandbox.id}/processes`)
+        if (processResponse.ok) {
+          const apiResponse = await processResponse.json()
           if (apiResponse.success && Array.isArray(apiResponse.data)) {
             const processesWithLogs: RunningProcess[] = apiResponse.data.map((proc: ProcessApiResponse) => ({
               id: proc.id,
@@ -44,14 +92,38 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
             setProcesses([])
           }
         }
+        
+        // Load exposed ports
+        const portsResponse = await fetch(`/api/sandboxes/${sandbox.id}/ports`)
+        if (portsResponse.ok) {
+          const portsApiResponse = await portsResponse.json()
+          if (portsApiResponse.success && Array.isArray(portsApiResponse.data)) {
+            const ports: ExposedPort[] = portsApiResponse.data.map((port: { port: number; url: string }) => ({
+              port: port.port,
+              previewUrl: port.url,
+              protocol: 'https',
+              status: 'active'
+            }))
+            setExposedPorts(ports)
+          }
+        }
       } catch (error) {
-        console.error('Failed to load processes:', error)
+        console.error('Failed to load data:', error)
         setProcesses([])
+        setExposedPorts([])
       }
     }
 
-    loadProcesses()
+    loadData()
   }, [sandbox.id])
+
+  const handleTemplateChange = (templateId: string) => {
+    setSelectedTemplate(templateId)
+    const template = processTemplates.find(t => t.id === templateId)
+    if (template) {
+      setNewProcessCommand(template.command)
+    }
+  }
 
   const handleStartProcess = async () => {
     if (!newProcessCommand.trim()) return
@@ -64,19 +136,27 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
       })
       
       if (response.ok) {
-        const processData = await response.json()
-        const newProcess: RunningProcess = {
-          id: processData.id,
-          command: processData.command,
-          pid: processData.pid,
-          status: processData.status,
-          startTime: new Date(processData.startTime),
-          logs: []
+        const apiResponse = await response.json()
+        if (apiResponse.success && apiResponse.data) {
+          const newProcess: RunningProcess = {
+            id: apiResponse.data.id,
+            command: apiResponse.data.command,
+            pid: apiResponse.data.pid,
+            status: apiResponse.data.status,
+            startTime: new Date(apiResponse.data.startTime),
+            logs: []
+          }
+          
+          setProcesses(prev => [...prev, newProcess])
+          setNewProcessCommand('')
+          setSelectedTemplate('custom')
+          setIsStartProcessOpen(false)
+          
+          // Refresh processes list to get updated data
+          setTimeout(() => {
+            window.location.reload()
+          }, 1000)
         }
-        
-        setProcesses(prev => [...prev, newProcess])
-        setNewProcessCommand('')
-        setIsStartProcessOpen(false)
       }
     } catch (error) {
       console.error('Failed to start process:', error)
@@ -88,39 +168,74 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
     if (!portNum || portNum < 1 || portNum > 65535) return
     
     try {
-      const response = await fetch(`/api/sandboxes/${sandbox.id}/expose-port`, {
+      const response = await fetch(`/api/sandboxes/${sandbox.id}/ports/expose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port: portNum })
       })
       
       if (response.ok) {
-        const portData = await response.json()
-        const newPort: ExposedPort = {
-          port: portData.port,
-          previewUrl: portData.url,
-          protocol: 'https',
-          status: 'active'
+        const apiResponse = await response.json()
+        if (apiResponse.success && apiResponse.data) {
+          const newPort: ExposedPort = {
+            port: apiResponse.data.port,
+            previewUrl: apiResponse.data.url,
+            protocol: 'https',
+            status: 'active'
+          }
+          
+          setExposedPorts(prev => [...prev, newPort])
+          setNewPortNumber('')
+          setIsExposePortOpen(false)
         }
-        
-        setExposedPorts(prev => [...prev, newPort])
-        setNewPortNumber('')
-        setIsExposePortOpen(false)
       }
     } catch (error) {
       console.error('Failed to expose port:', error)
     }
   }
 
-  const handleStopProcess = (processId: string) => {
-    setProcesses(prev => prev.filter(p => p.id !== processId))
+  const handleStopProcess = async (processId: string) => {
+    try {
+      const response = await fetch(`/api/sandboxes/${sandbox.id}/processes/${processId}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        setProcesses(prev => prev.filter(p => p.id !== processId))
+      } else {
+        console.error('Failed to stop process')
+      }
+    } catch (error) {
+      console.error('Failed to stop process:', error)
+    }
   }
 
-  const toggleLogs = (processId: string) => {
+  const toggleLogs = async (processId: string) => {
+    const isCurrentlyShown = showLogs[processId]
+    
     setShowLogs(prev => ({
       ...prev,
       [processId]: !prev[processId]
     }))
+    
+    // If we're showing logs for the first time, fetch them
+    if (!isCurrentlyShown) {
+      try {
+        const response = await fetch(`/api/sandboxes/${sandbox.id}/processes/${processId}/logs`)
+        if (response.ok) {
+          const apiResponse = await response.json()
+          if (apiResponse.success && Array.isArray(apiResponse.data)) {
+            setProcesses(prev => prev.map(process => 
+              process.id === processId 
+                ? { ...process, logs: apiResponse.data }
+                : process
+            ))
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load process logs:', error)
+      }
+    }
   }
 
   const getStatusColor = (status: string) => {
@@ -143,9 +258,9 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between p-6 flex-shrink-0">
         <h2 className="text-xl font-semibold">Process Management</h2>
         <div className="flex items-center space-x-2">
           <Dialog open={isStartProcessOpen} onOpenChange={setIsStartProcessOpen}>
@@ -155,25 +270,59 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
                 Start Process
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>Start New Process</DialogTitle>
+                <DialogDescription>
+                  Choose a template or enter a custom command to start a background process
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Process Template</label>
+                  <Select value={selectedTemplate} onValueChange={handleTemplateChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {processTemplates.map((template) => (
+                        <SelectItem key={template.id} value={template.id}>
+                          <div className="flex items-center space-x-2">
+                            <Terminal className="h-4 w-4" />
+                            <div>
+                              <div className="font-medium">{template.name}</div>
+                              <div className="text-xs text-muted-foreground">{template.description}</div>
+                            </div>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
                 <div>
                   <label className="block text-sm font-medium mb-1">Command</label>
                   <Input
                     value={newProcessCommand}
                     onChange={(e) => setNewProcessCommand(e.target.value)}
                     placeholder="e.g., node server.js, npm start, python app.py"
+                    className="font-mono text-sm"
                   />
                 </div>
+                
+                {selectedTemplate !== 'custom' && (
+                  <div className="text-xs text-muted-foreground bg-muted p-2 rounded">
+                    <strong>Template:</strong> {processTemplates.find(t => t.id === selectedTemplate)?.description}
+                  </div>
+                )}
+                
                 <div className="flex justify-end space-x-2">
                   <Button variant="outline" onClick={() => setIsStartProcessOpen(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleStartProcess}>
-                    Start
+                  <Button onClick={handleStartProcess} disabled={!newProcessCommand.trim()}>
+                    <Play className="h-4 w-4 mr-1" />
+                    Start Process
                   </Button>
                 </div>
               </div>
@@ -216,8 +365,11 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
           </Dialog>
         </div>
       </div>
-
-      {/* Running Processes */}
+      
+      <div className="flex-1">
+        <ScrollArea className="h-full">
+          <div className="p-6 pt-0 space-y-6">
+            {/* Running Processes */}
       <Card>
         <CardHeader>
           <CardTitle>Running Processes ({processes.length})</CardTitle>
@@ -258,15 +410,9 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
                         size="sm"
                         variant="outline"
                         onClick={() => handleStopProcess(process.id)}
+                        title="Kill Process"
                       >
                         <Square className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleStopProcess(process.id)}
-                      >
-                        <Trash2 className="h-3 w-3" />
                       </Button>
                     </div>
                   </div>
@@ -353,6 +499,9 @@ export function ProcessesTab({ sandbox }: ProcessesTabProps) {
           )}
         </CardContent>
       </Card>
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   )
 }

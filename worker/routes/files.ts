@@ -149,4 +149,156 @@ files.get('/read/*', async (c) => {
   }
 });
 
+/**
+ * Create a directory in sandbox
+ */
+files.post('/mkdir', async (c) => {
+  const sandboxId = c.req.param('sandboxId');
+  
+  if (!sandboxId) {
+    return sendError(c, 'Sandbox ID is required', 400);
+  }
+
+  const sandboxState = storage.getSandbox(sandboxId);
+  if (!sandboxState) {
+    return sendError(c, 'Sandbox not found', 404);
+  }
+
+  try {
+    const { path } = await c.req.json();
+    
+    if (!path) {
+      return sendError(c, 'Directory path is required', 400);
+    }
+
+    console.log(`[FILES_MKDIR] Creating directory for sandbox ${sandboxId}: ${path}`);
+    
+    const sandbox = getSandbox(c.env.Sandbox, sandboxId);
+    await sandbox.mkdir(path);
+
+    storage.updateSandboxActivity(sandboxId);
+    
+    console.log(`[FILES_MKDIR] Successfully created directory: ${path}`);
+    return sendSuccess(c, { path, created: true }, 'Directory created successfully');
+    
+  } catch (error) {
+    console.error(`[FILES_MKDIR] Failed to create directory for ${sandboxId}:`, error);
+    return sendError(c, 'Failed to create directory', 500, error instanceof Error ? error.message : 'Unknown error');
+  }
+});
+
+/**
+ * Delete a file or directory from sandbox
+ */
+files.post('/delete', async (c) => {
+  const sandboxId = c.req.param('sandboxId');
+  
+  if (!sandboxId) {
+    return sendError(c, 'Sandbox ID is required', 400);
+  }
+
+  const sandboxState = storage.getSandbox(sandboxId);
+  if (!sandboxState) {
+    return sendError(c, 'Sandbox not found', 404);
+  }
+
+  try {
+    const { path } = await c.req.json();
+    
+    if (!path) {
+      return sendError(c, 'File path is required', 400);
+    }
+
+    console.log(`[FILES_DELETE] Deleting file/directory for sandbox ${sandboxId}: ${path}`);
+    
+    const sandbox = getSandbox(c.env.Sandbox, sandboxId);
+    await sandbox.deleteFile(path);
+
+    storage.updateSandboxActivity(sandboxId);
+    
+    console.log(`[FILES_DELETE] Successfully deleted: ${path}`);
+    return sendSuccess(c, { path, deleted: true }, 'File/directory deleted successfully');
+    
+  } catch (error) {
+    console.error(`[FILES_DELETE] Failed to delete file/directory for ${sandboxId}:`, error);
+    return sendError(c, 'Failed to delete file/directory', 500, error instanceof Error ? error.message : 'Unknown error');
+  }
+});
+
+/**
+ * Rename a file or directory in sandbox
+ */
+files.post('/rename', async (c) => {
+  const sandboxId = c.req.param('sandboxId');
+  
+  if (!sandboxId) {
+    return sendError(c, 'Sandbox ID is required', 400);
+  }
+
+  const sandboxState = storage.getSandbox(sandboxId);
+  if (!sandboxState) {
+    return sendError(c, 'Sandbox not found', 404);
+  }
+
+  try {
+    const { oldPath, newPath } = await c.req.json();
+    
+    if (!oldPath || !newPath) {
+      return sendError(c, 'Both old path and new path are required', 400);
+    }
+
+    console.log(`[FILES_RENAME] Renaming file/directory for sandbox ${sandboxId}: ${oldPath} -> ${newPath}`);
+    
+    const sandbox = getSandbox(c.env.Sandbox, sandboxId);
+    await sandbox.renameFile(oldPath, newPath);
+
+    storage.updateSandboxActivity(sandboxId);
+    
+    console.log(`[FILES_RENAME] Successfully renamed: ${oldPath} -> ${newPath}`);
+    return sendSuccess(c, { oldPath, newPath, renamed: true }, 'File/directory renamed successfully');
+    
+  } catch (error) {
+    console.error(`[FILES_RENAME] Failed to rename file/directory for ${sandboxId}:`, error);
+    return sendError(c, 'Failed to rename file/directory', 500, error instanceof Error ? error.message : 'Unknown error');
+  }
+});
+
+/**
+ * Move a file or directory in sandbox
+ */
+files.post('/move', async (c) => {
+  const sandboxId = c.req.param('sandboxId');
+  
+  if (!sandboxId) {
+    return sendError(c, 'Sandbox ID is required', 400);
+  }
+
+  const sandboxState = storage.getSandbox(sandboxId);
+  if (!sandboxState) {
+    return sendError(c, 'Sandbox not found', 404);
+  }
+
+  try {
+    const { sourcePath, destinationPath } = await c.req.json();
+    
+    if (!sourcePath || !destinationPath) {
+      return sendError(c, 'Both source path and destination path are required', 400);
+    }
+
+    console.log(`[FILES_MOVE] Moving file/directory for sandbox ${sandboxId}: ${sourcePath} -> ${destinationPath}`);
+    
+    const sandbox = getSandbox(c.env.Sandbox, sandboxId);
+    await sandbox.moveFile(sourcePath, destinationPath);
+
+    storage.updateSandboxActivity(sandboxId);
+    
+    console.log(`[FILES_MOVE] Successfully moved: ${sourcePath} -> ${destinationPath}`);
+    return sendSuccess(c, { sourcePath, destinationPath, moved: true }, 'File/directory moved successfully');
+    
+  } catch (error) {
+    console.error(`[FILES_MOVE] Failed to move file/directory for ${sandboxId}:`, error);
+    return sendError(c, 'Failed to move file/directory', 500, error instanceof Error ? error.message : 'Unknown error');
+  }
+});
+
 export { files };

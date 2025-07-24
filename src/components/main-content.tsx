@@ -1,4 +1,4 @@
-import { Terminal, FileText, GitBranch, Activity, Settings, Zap } from 'lucide-react'
+import { Terminal, FileText, GitBranch, Activity, Settings, Zap, Globe } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { TerminalTab } from '@/components/tabs/terminal-tab'
@@ -6,6 +6,7 @@ import { FilesTab } from '@/components/tabs/files-tab'
 import { ProcessesTab } from '@/components/tabs/processes-tab'
 import { MetricsTab } from '@/components/tabs/metrics-tab'
 import { SettingsTab } from '@/components/tabs/settings-tab'
+import { PortsTab } from '@/components/tabs/ports-tab'
 import type { SandboxEnvironment } from '@/types/sandbox'
 
 interface MainContentProps {
@@ -44,6 +45,14 @@ export function MainContent({ selectedSandbox }: MainContentProps) {
                 <Activity className="h-4 w-4 text-muted-foreground" />
                 <span>Process Management</span>
               </div>
+              <div className="flex items-center space-x-2">
+                <Globe className="h-4 w-4 text-muted-foreground" />
+                <span>Port Management</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Zap className="h-4 w-4 text-muted-foreground" />
+                <span>Real-time Metrics</span>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -77,6 +86,10 @@ export function MainContent({ selectedSandbox }: MainContentProps) {
             <Activity className="h-4 w-4" />
             <span>Processes</span>
           </TabsTrigger>
+          <TabsTrigger value="ports" className="flex items-center space-x-2">
+            <Globe className="h-4 w-4" />
+            <span>Ports</span>
+          </TabsTrigger>
           <TabsTrigger value="metrics" className="flex items-center space-x-2">
             <Zap className="h-4 w-4" />
             <span>Metrics</span>
@@ -98,6 +111,10 @@ export function MainContent({ selectedSandbox }: MainContentProps) {
           
           <TabsContent value="processes" className="h-full m-0">
             <ProcessesTab sandbox={selectedSandbox} />
+          </TabsContent>
+          
+          <TabsContent value="ports" className="h-full m-0">
+            <PortsTab sandbox={selectedSandbox} />
           </TabsContent>
           
           <TabsContent value="metrics" className="h-full m-0">

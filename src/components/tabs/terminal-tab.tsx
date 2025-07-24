@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Terminal, History, Trash2 } from 'lucide-react'
+import { Send, Terminal, History, Trash2, Activity } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,17 +21,17 @@ interface TerminalEntry {
   executionTime?: number
 }
 
+interface CommandStats {
+  command: string
+  count: number
+  totalTime: number
+  avgTime: number
+}
+
 export function TerminalTab({ sandbox }: TerminalTabProps) {
-  const { executeCommand, streamCommand, commandHistory } = useSandbox()
+  const { executeCommand, streamCommand, commandHistory, getTerminalHistory, addTerminalEntry, clearTerminalHistory } = useSandbox()
   const [currentCommand, setCurrentCommand] = useState('')
-  const [terminalHistory, setTerminalHistory] = useState<TerminalEntry[]>([
-    {
-      id: 'welcome',
-      type: 'system',
-      content: `Welcome to ${sandbox.name} sandbox environment.\nType 'help' to see available commands.`,
-      timestamp: new Date()
-    }
-  ])
+  const terminalHistory = getTerminalHistory(sandbox.id)
   const [isExecuting, setIsExecuting] = useState(false)
   const [commandHistoryIndex, setCommandHistoryIndex] = useState(-1)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -39,12 +39,41 @@ export function TerminalTab({ sandbox }: TerminalTabProps) {
   
   const recentCommands = commandHistory
     .filter(cmd => cmd.command.trim())
-    .slice(0, 10)
+    .slice(0, 5) // Shortened to 5 commands
     .map(cmd => cmd.command)
+    
+  // Calculate command statistics
+  const commandStats: CommandStats[] = commandHistory
+    .filter(cmd => cmd.command.trim() && cmd.executionTime)
+    .reduce((acc, cmd) => {
+      const baseCommand = cmd.command.trim().split(' ')[0] // Get base command (git, npm, etc.)
+      const existing = acc.find(stat => stat.command === baseCommand)
+      
+      if (existing) {
+        existing.count++
+        existing.totalTime += cmd.executionTime!
+        existing.avgTime = existing.totalTime / existing.count
+      } else {
+        acc.push({
+          command: baseCommand,
+          count: 1,
+          totalTime: cmd.executionTime!,
+          avgTime: cmd.executionTime!
+        })
+      }
+      
+      return acc
+    }, [] as CommandStats[])
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8) // Top 8 most used commands
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      // ScrollArea has a viewport div inside it
+      const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight
+      }
     }
   }, [terminalHistory])
 
@@ -54,7 +83,7 @@ export function TerminalTab({ sandbox }: TerminalTabProps) {
       id: `entry-${Date.now()}-${Math.random()}`,
       timestamp: new Date()
     }
-    setTerminalHistory(prev => [...prev, newEntry])
+    addTerminalEntry(sandbox.id, newEntry)
   }
 
   const executeCmd = async (command: string) => {
@@ -71,12 +100,13 @@ export function TerminalTab({ sandbox }: TerminalTabProps) {
     try {
       // Handle built-in commands
       if (command.trim() === 'clear') {
-        setTerminalHistory([{
+        clearTerminalHistory(sandbox.id)
+        addTerminalEntry(sandbox.id, {
           id: 'cleared',
           type: 'system',
           content: 'Terminal cleared.',
           timestamp: new Date()
-        }])
+        })
         return
       }
       
@@ -100,31 +130,52 @@ You can run any standard Linux command in this sandbox environment.`
       }
       
       // Handle streaming commands (like npm install, git clone, etc.)
-      const streamingCommands = ['npm install', 'git clone', 'docker build', 'yarn install']
+      const streamingCommands = ['npm install', 'git clone', 'docker build', 'yarn install', 'pip install', 'cargo build']
       const isStreamingCommand = streamingCommands.some(cmd => command.includes(cmd))
+      
+      const startTime = Date.now()
       
       if (isStreamingCommand) {
         let output = ''
-        await streamCommand(sandbox.id, command, (data) => {
-          output += data
-          // Update the last entry if it's output, otherwise add new
-          setTerminalHistory(prev => {
-            const lastEntry = prev[prev.length - 1]
-            if (lastEntry && lastEntry.type === 'output') {
-              return [
-                ...prev.slice(0, -1),
-                { ...lastEntry, content: output }
-              ]
+        const outputEntryId = `output-${Date.now()}`
+        
+        try {
+          await streamCommand(sandbox.id, command, (data) => {
+            output += data
+            
+            // Get current history and update or add output entry
+            const currentHistory = getTerminalHistory(sandbox.id)
+            const lastEntry = currentHistory[currentHistory.length - 1]
+            
+            if (lastEntry && lastEntry.type === 'output' && lastEntry.id === outputEntryId) {
+              // Update existing output entry content
+              lastEntry.content = output
             } else {
-              return [...prev, {
-                id: `output-${Date.now()}`,
-                type: 'output' as const,
+              // Add new output entry
+              addTerminalEntry(sandbox.id, {
+                id: outputEntryId,
+                type: 'output',
                 content: output,
                 timestamp: new Date()
-              }]
+              })
             }
           })
-        })
+          
+          // Add execution time for streaming commands
+          const executionTime = Date.now() - startTime
+          addToTerminal({
+            type: 'system',
+            content: `Command completed in ${executionTime.toFixed(0)}ms`,
+            executionTime
+          })
+        } catch (error) {
+          const executionTime = Date.now() - startTime
+          addToTerminal({
+            type: 'error',
+            content: `Streaming command failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            executionTime
+          })
+        }
       } else {
         // Regular command execution
         const result = await executeCommand(sandbox.id, command)
@@ -140,14 +191,25 @@ You can run any standard Linux command in this sandbox environment.`
         if (result.stderr) {
           addToTerminal({
             type: 'error',
-            content: result.stderr
+            content: result.stderr,
+            executionTime: result.executionTime
           })
         }
         
         if (result.exitCode !== 0) {
           addToTerminal({
             type: 'error',
-            content: `Command exited with code ${result.exitCode}`
+            content: `Command exited with code ${result.exitCode}`,
+            executionTime: result.executionTime
+          })
+        }
+        
+        // Always show execution time for regular commands
+        if (!result.stdout && !result.stderr) {
+          addToTerminal({
+            type: 'system',
+            content: `Command executed in ${result.executionTime.toFixed(0)}ms`,
+            executionTime: result.executionTime
           })
         }
       }
@@ -188,12 +250,13 @@ You can run any standard Linux command in this sandbox environment.`
   }
 
   const clearTerminal = () => {
-    setTerminalHistory([{
+    clearTerminalHistory(sandbox.id)
+    addTerminalEntry(sandbox.id, {
       id: 'cleared',
       type: 'system',
       content: 'Terminal cleared.',
       timestamp: new Date()
-    }])
+    })
   }
 
   const getEntryColor = (type: string) => {
@@ -207,8 +270,8 @@ You can run any standard Linux command in this sandbox environment.`
   }
 
   return (
-    <div className="flex flex-col h-full p-6 space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between flex-shrink-0 p-6 pb-4">
         <div className="flex items-center space-x-2">
           <Terminal className="h-5 w-5" />
           <span className="font-medium">Interactive Terminal</span>
@@ -229,11 +292,11 @@ You can run any standard Linux command in this sandbox environment.`
         </div>
       </div>
 
-      <div className="flex-1 flex space-x-4">
-        <Card className="flex-1">
+      <div className="flex-1 flex space-x-4 px-6 pb-6 min-h-0">
+        <Card className="flex-1 flex flex-col">
           <CardContent className="p-0 h-full flex flex-col">
-            <ScrollArea className="flex-1 p-4" ref={scrollRef}>
-              <div className="space-y-2 font-mono text-sm">
+            <ScrollArea className="flex-1" ref={scrollRef}>
+              <div className="p-4 space-y-2 font-mono text-sm">
                 {terminalHistory.map((entry) => (
                   <div key={entry.id} className="flex items-start space-x-2">
                     <span className="text-muted-foreground text-xs mt-1 min-w-[60px]">
@@ -263,49 +326,98 @@ You can run any standard Linux command in this sandbox environment.`
               </div>
             </ScrollArea>
             
-            <form onSubmit={handleSubmit} className="border-t p-4">
-              <div className="flex items-center space-x-2">
-                <span className="text-muted-foreground font-mono text-sm">$</span>
-                <Input
-                  ref={inputRef}
-                  value={currentCommand}
-                  onChange={(e) => setCurrentCommand(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a command..."
-                  className="flex-1 font-mono"
-                  disabled={isExecuting || sandbox.status !== 'running'}
-                />
-                <Button type="submit" disabled={isExecuting || sandbox.status !== 'running'}>
-                  <Send className="h-4 w-4" />
-                </Button>
-              </div>
-            </form>
+            <div className="border-t p-4 flex-shrink-0">
+              <form onSubmit={handleSubmit}>
+                <div className="flex items-center space-x-2">
+                  <span className="text-muted-foreground font-mono text-sm">$</span>
+                  <Input
+                    ref={inputRef}
+                    value={currentCommand}
+                    onChange={(e) => setCurrentCommand(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type a command..."
+                    className="flex-1 font-mono"
+                    disabled={isExecuting || sandbox.status !== 'running'}
+                  />
+                  <Button type="submit" disabled={isExecuting || sandbox.status !== 'running'}>
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+              </form>
+            </div>
           </CardContent>
         </Card>
 
-        <Card className="w-80">
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2 text-sm">
-              <History className="h-4 w-4" />
-              <span>Command History</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {recentCommands.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No commands yet</p>
-            ) : (
-              recentCommands.map((cmd, index) => (
-                <button
-                  key={index}
-                  onClick={() => setCurrentCommand(cmd)}
-                  className="w-full text-left p-2 text-sm font-mono bg-muted rounded hover:bg-muted/80 transition-colors"
-                >
-                  {cmd}
-                </button>
-              ))
-            )}
-          </CardContent>
-        </Card>
+        <div className="w-80 flex flex-col space-y-4 h-full">
+          {/* Command History */}
+          <Card className="h-48 flex flex-col">
+            <CardHeader className="pb-2 flex-shrink-0">
+              <CardTitle className="flex items-center space-x-2 text-sm">
+                <History className="h-4 w-4" />
+                <span>Recent Commands</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className="space-y-1">
+                  {recentCommands.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No commands yet</p>
+                  ) : (
+                    recentCommands.map((cmd, index) => (
+                      <button
+                        key={index}
+                        onClick={() => setCurrentCommand(cmd)}
+                        className="w-full text-left p-2 text-xs font-mono bg-muted rounded hover:bg-muted/80 transition-colors truncate"
+                        title={cmd}
+                      >
+                        {cmd}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+          
+          {/* Command Analytics */}
+          <Card className="flex-1 flex flex-col">
+            <CardHeader className="pb-2 flex-shrink-0">
+              <CardTitle className="flex items-center space-x-2 text-sm">
+                <Activity className="h-4 w-4" />
+                <span>Command Analytics</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className="space-y-2">
+                  {commandStats.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No analytics yet</p>
+                  ) : (
+                    commandStats.map((stat, index) => (
+                      <div key={index} className="flex items-center justify-between p-2 bg-muted/50 rounded text-xs">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-mono font-medium truncate">{stat.command}</div>
+                          <div className="text-muted-foreground">
+                            {stat.count} use{stat.count !== 1 ? 's' : ''}
+                          </div>
+                        </div>
+                        <div className="text-right ml-2">
+                          <div className="font-medium">
+                            {stat.avgTime < 1000 
+                              ? `${stat.avgTime.toFixed(0)}ms` 
+                              : `${(stat.avgTime / 1000).toFixed(1)}s`
+                            }
+                          </div>
+                          <div className="text-muted-foreground text-xs">avg</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   )

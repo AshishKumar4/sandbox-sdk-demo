@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
-import { FileText, Folder, Plus, Download, Edit, Save, X, ArrowLeft, ChevronRight, Home } from 'lucide-react'
+import { FileText, Folder, Plus, Download, Edit, Save, X, ArrowLeft, ChevronRight, Home, Trash2, Move, FolderPlus } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import type { SandboxEnvironment, FileNode, FileApiResponse } from '@/types/sandbox'
@@ -25,6 +27,10 @@ export function FilesTab({ sandbox }: FilesTabProps) {
   const [newFileType, setNewFileType] = useState<'file' | 'directory'>('file')
   const [currentPath, setCurrentPath] = useState('/')
   const [pathHistory, setPathHistory] = useState<string[]>(['/'])
+  const [selectedForAction, setSelectedForAction] = useState<FileNode | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
 
   useEffect(() => {
     const loadFiles = async () => {
@@ -161,21 +167,147 @@ export function FilesTab({ sandbox }: FilesTabProps) {
     }
   }
 
-  const handleCreateFile = () => {
+  const handleCreateFile = async () => {
     if (!newFileName.trim()) return
     
-    const newFile: FileNode = {
-      name: newFileName,
-      path: `${currentPath}${newFileName}`,
-      type: newFileType,
-      size: 0,
-      lastModified: new Date(),
-      children: newFileType === 'directory' ? [] : undefined
+    try {
+      let response
+      if (newFileType === 'directory') {
+        // Create directory using mkdir API
+        response = await fetch(`/api/sandboxes/${sandbox.id}/files/mkdir`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: `${currentPath === '/' ? '' : currentPath}/${newFileName}`
+          })
+        })
+      } else {
+        // Create file
+        response = await fetch(`/api/sandboxes/${sandbox.id}/files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: `${currentPath === '/' ? '' : currentPath}/${newFileName}`,
+            content: ''
+          })
+        })
+      }
+      
+      if (response.ok) {
+        const apiResponse = await response.json()
+        if (apiResponse.success) {
+          // Reload files to reflect the new file/directory
+          const filesResponse = await fetch(`/api/sandboxes/${sandbox.id}/files?path=${encodeURIComponent(currentPath)}`)
+          if (filesResponse.ok) {
+            const filesApiResponse = await filesResponse.json()
+            if (filesApiResponse.success && Array.isArray(filesApiResponse.data)) {
+              const fileNodes: FileNode[] = filesApiResponse.data.map((file: FileApiResponse) => ({
+                name: file.name,
+                path: file.path,
+                type: file.type,
+                size: file.size || 0,
+                lastModified: new Date(file.lastModified)
+              }))
+              setFiles(fileNodes)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to create file/directory:', error)
     }
     
-    setFiles(prev => [...prev, newFile])
     setNewFileName('')
     setIsCreateDialogOpen(false)
+  }
+
+  const handleDeleteFile = async () => {
+    if (!selectedForAction) return
+    
+    try {
+      const response = await fetch(`/api/sandboxes/${sandbox.id}/files/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: selectedForAction.path
+        })
+      })
+      
+      if (response.ok) {
+        const apiResponse = await response.json()
+        if (apiResponse.success) {
+          // Reload files
+          const filesResponse = await fetch(`/api/sandboxes/${sandbox.id}/files?path=${encodeURIComponent(currentPath)}`)
+          if (filesResponse.ok) {
+            const filesApiResponse = await filesResponse.json()
+            if (filesApiResponse.success && Array.isArray(filesApiResponse.data)) {
+              const fileNodes: FileNode[] = filesApiResponse.data.map((file: FileApiResponse) => ({
+                name: file.name,
+                path: file.path,
+                type: file.type,
+                size: file.size || 0,
+                lastModified: new Date(file.lastModified)
+              }))
+              setFiles(fileNodes)
+            }
+          }
+          // Clear selection if the deleted file was selected
+          if (selectedFile?.path === selectedForAction.path) {
+            setSelectedFile(null)
+            setFileContent('')
+            setEditedContent('')
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete file:', error)
+    }
+    
+    setSelectedForAction(null)
+    setIsDeleteDialogOpen(false)
+  }
+
+  const handleRenameFile = async () => {
+    if (!selectedForAction || !renameValue.trim()) return
+    
+    try {
+      const newPath = selectedForAction.path.replace(/[^/]*$/, renameValue)
+      const response = await fetch(`/api/sandboxes/${sandbox.id}/files/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          oldPath: selectedForAction.path,
+          newPath: newPath
+        })
+      })
+      
+      if (response.ok) {
+        const apiResponse = await response.json()
+        if (apiResponse.success) {
+          // Reload files
+          const filesResponse = await fetch(`/api/sandboxes/${sandbox.id}/files?path=${encodeURIComponent(currentPath)}`)
+          if (filesResponse.ok) {
+            const filesApiResponse = await filesResponse.json()
+            if (filesApiResponse.success && Array.isArray(filesApiResponse.data)) {
+              const fileNodes: FileNode[] = filesApiResponse.data.map((file: FileApiResponse) => ({
+                name: file.name,
+                path: file.path,
+                type: file.type,
+                size: file.size || 0,
+                lastModified: new Date(file.lastModified)
+              }))
+              setFiles(fileNodes)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to rename file:', error)
+    }
+    
+    setSelectedForAction(null)
+    setRenameValue('')
+    setIsRenameDialogOpen(false)
   }
 
   const formatFileSize = (bytes: number) => {
@@ -192,23 +324,62 @@ export function FilesTab({ sandbox }: FilesTabProps) {
   const renderFiles = (fileList: FileNode[], depth = 0) => {
     console.log(`[FILES_FRONTEND] Rendering ${fileList.length} files:`, fileList.map(f => f.name))
     return fileList.map((file) => (
-      <div key={file.path}>
-        <button
-          onClick={() => handleFileSelect(file)}
+      <div key={file.path} className="group">
+        <div
           className={cn(
-            "w-full flex items-center space-x-2 p-2 text-left hover:bg-muted rounded transition-colors",
+            "flex items-center space-x-2 p-2 hover:bg-muted rounded transition-colors",
             selectedFile?.path === file.path && "bg-primary/10 text-primary"
           )}
           style={{ paddingLeft: `${depth * 20 + 8}px` }}
         >
-          {getFileIcon(file)}
-          <span className="flex-1 text-sm">{file.name}</span>
-          {file.type === 'file' && file.size && (
-            <Badge variant="secondary" className="text-xs">
-              {formatFileSize(file.size)}
-            </Badge>
-          )}
-        </button>
+          <button
+            onClick={() => handleFileSelect(file)}
+            className="flex-1 flex items-center space-x-2 text-left"
+          >
+            {getFileIcon(file)}
+            <span className="flex-1 text-sm">{file.name}</span>
+            {file.type === 'file' && file.size && (
+              <Badge variant="secondary" className="text-xs">
+                {formatFileSize(file.size)}
+              </Badge>
+            )}
+          </button>
+          
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Move className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem 
+                onClick={() => {
+                  setSelectedForAction(file)
+                  setRenameValue(file.name)
+                  setIsRenameDialogOpen(true)
+                }}
+              >
+                <Edit className="h-3 w-3 mr-2" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                onClick={() => {
+                  setSelectedForAction(file)
+                  setIsDeleteDialogOpen(true)
+                }}
+                className="text-red-600"
+              >
+                <Trash2 className="h-3 w-3 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         {file.children && (
           <div>
             {renderFiles(file.children, depth + 1)}
@@ -236,23 +407,36 @@ export function FilesTab({ sandbox }: FilesTabProps) {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Create New File/Directory</DialogTitle>
+                  <DialogTitle>Create New {newFileType === 'file' ? 'File' : 'Directory'}</DialogTitle>
+                  <DialogDescription>
+                    Create a new {newFileType} in {currentPath === '/' ? 'root directory' : currentPath}
+                  </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Type</label>
-                    <select
-                      value={newFileType}
-                      onChange={(e) => setNewFileType(e.target.value as 'file' | 'directory')}
-                      className="w-full p-2 border rounded-md"
+                  <div className="flex space-x-2">
+                    <Button
+                      variant={newFileType === 'file' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setNewFileType('file')}
+                      className="flex items-center gap-2"
                     >
-                      <option value="file">File</option>
-                      <option value="directory">Directory</option>
-                    </select>
+                      <FileText className="h-3 w-3" />
+                      File
+                    </Button>
+                    <Button
+                      variant={newFileType === 'directory' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setNewFileType('directory')}
+                      className="flex items-center gap-2"
+                    >
+                      <FolderPlus className="h-3 w-3" />
+                      Directory
+                    </Button>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-1">Name</label>
+                    <Label htmlFor="new-file-name">Name</Label>
                     <Input
+                      id="new-file-name"
                       value={newFileName}
                       onChange={(e) => setNewFileName(e.target.value)}
                       placeholder={newFileType === 'file' ? 'filename.ext' : 'directory-name'}
@@ -262,8 +446,9 @@ export function FilesTab({ sandbox }: FilesTabProps) {
                     <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                       Cancel
                     </Button>
-                    <Button onClick={handleCreateFile}>
-                      Create
+                    <Button onClick={handleCreateFile} disabled={!newFileName.trim()}>
+                      {newFileType === 'file' ? <FileText className="h-3 w-3 mr-1" /> : <FolderPlus className="h-3 w-3 mr-1" />}
+                      Create {newFileType === 'file' ? 'File' : 'Directory'}
                     </Button>
                   </div>
                 </div>
@@ -380,6 +565,55 @@ export function FilesTab({ sandbox }: FilesTabProps) {
           </Card>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedForAction?.type === 'directory' ? 'Directory' : 'File'}</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{selectedForAction?.name}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteFile}>
+              Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Dialog */}
+      <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename {selectedForAction?.type === 'directory' ? 'Directory' : 'File'}</DialogTitle>
+            <DialogDescription>
+              Enter a new name for "{selectedForAction?.name}"
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="Enter new name"
+              />
+            </div>
+            <div className="flex justify-end space-x-2">
+              <Button variant="outline" onClick={() => setIsRenameDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleRenameFile} disabled={!renameValue.trim()}>
+                Rename
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

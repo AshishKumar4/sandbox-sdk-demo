@@ -198,15 +198,51 @@ export function SandboxProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const saveStartupScript = useCallback((script: StartupScript) => {
-    setStartupScripts(prev => {
-      const existing = prev.find(s => s.id === script.id)
-      if (existing) {
-        return prev.map(s => s.id === script.id ? script : s)
+  const saveStartupScript = useCallback(async (script: StartupScript) => {
+    try {
+      const isUpdate = startupScripts.some(s => s.id === script.id)
+      const method = isUpdate ? 'PUT' : 'POST'
+      const url = isUpdate ? `/api/startup-scripts/${script.id}` : '/api/startup-scripts'
+      
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: script.name,
+          content: script.content,
+          description: script.description
+        })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to save startup script')
       }
-      return [...prev, script]
-    })
-  }, [])
+      
+      const apiResponse = await response.json()
+      if (!apiResponse.success || !apiResponse.data) {
+        throw new Error(apiResponse.error || 'Failed to save startup script')
+      }
+      
+      const savedScript = {
+        ...apiResponse.data,
+        createdAt: new Date(apiResponse.data.createdAt),
+        lastUsed: apiResponse.data.lastUsed ? new Date(apiResponse.data.lastUsed) : undefined
+      }
+      
+      setStartupScripts(prev => {
+        const existing = prev.find(s => s.id === savedScript.id)
+        if (existing) {
+          return prev.map(s => s.id === savedScript.id ? savedScript : s)
+        }
+        return [...prev, savedScript]
+      })
+      
+      return savedScript
+    } catch (error) {
+      console.error('Failed to save startup script:', error)
+      throw error
+    }
+  }, [startupScripts])
 
   const updateSandboxMetrics = useCallback((sandboxId: string) => {
     setSandboxes(prev => prev.map(sb => {
@@ -306,20 +342,48 @@ export function SandboxProvider({ children }: { children: React.ReactNode }) {
         if (response.ok) {
           const apiResponse = await response.json()
           if (apiResponse.success && Array.isArray(apiResponse.data)) {
-            const loadedSandboxes = apiResponse.data.map((sb: SandboxEnvironment) => ({
-              ...sb,
-              createdAt: new Date(sb.createdAt),
-              lastActivity: new Date(sb.lastActivity),
-              metrics: {
-                ...sb.metrics,
-                p99CommandTime: sb.metrics?.p99CommandTime || 0,
-                memoryUsage: Math.random() * 100,
-                cpuUsage: Math.random() * 100
-              },
-              processes: sb.processes || [],
-              exposedPorts: sb.exposedPorts || [],
-              files: sb.files || []
-            }))
+            const loadedSandboxes = await Promise.all(
+              apiResponse.data.map(async (sb: SandboxEnvironment) => {
+                let processes: any[] = []
+                
+                // Load processes for running sandboxes
+                if (sb.status === 'running') {
+                  try {
+                    const processResponse = await fetch(`/api/sandboxes/${sb.id}/processes`)
+                    if (processResponse.ok) {
+                      const processApiResponse = await processResponse.json()
+                      if (processApiResponse.success && Array.isArray(processApiResponse.data)) {
+                        processes = processApiResponse.data.map((proc: any) => ({
+                          id: proc.id,
+                          command: proc.command,
+                          pid: proc.pid,
+                          status: proc.status,
+                          startTime: new Date(proc.startTime),
+                          logs: proc.logs || []
+                        }))
+                      }
+                    }
+                  } catch (error) {
+                    console.error(`Failed to load processes for sandbox ${sb.id}:`, error)
+                  }
+                }
+                
+                return {
+                  ...sb,
+                  createdAt: new Date(sb.createdAt),
+                  lastActivity: new Date(sb.lastActivity),
+                  metrics: {
+                    ...sb.metrics,
+                    p99CommandTime: sb.metrics?.p99CommandTime || 0,
+                    memoryUsage: Math.random() * 100,
+                    cpuUsage: Math.random() * 100
+                  },
+                  processes,
+                  exposedPorts: sb.exposedPorts || [],
+                  files: sb.files || []
+                }
+              })
+            )
             setSandboxes(loadedSandboxes)
           }
         }
@@ -342,8 +406,33 @@ export function SandboxProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const loadStartupScripts = async () => {
+      try {
+        const response = await fetch('/api/startup-scripts')
+        if (response.ok) {
+          const apiResponse = await response.json()
+          if (apiResponse.success && Array.isArray(apiResponse.data)) {
+            const loadedScripts = apiResponse.data.map((script: any) => ({
+              ...script,
+              createdAt: new Date(script.createdAt),
+              lastUsed: script.lastUsed ? new Date(script.lastUsed) : undefined
+            }))
+            setStartupScripts(loadedScripts)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load startup scripts:', error)
+      }
+    }
+
     loadSandboxes()
     loadMetrics()
+    loadStartupScripts()
+    
+    // Refresh sandbox data every 30 seconds to keep process counts updated
+    const interval = setInterval(loadSandboxes, 30000)
+    
+    return () => clearInterval(interval)
   }, [])
 
   // Update metrics periodically
@@ -391,7 +480,10 @@ export function SandboxProvider({ children }: { children: React.ReactNode }) {
     streamCommand,
     saveStartupScript,
     updateSandboxMetrics,
-    pingSandbox
+    pingSandbox,
+    getTerminalHistory,
+    addTerminalEntry,
+    clearTerminalHistory
   }
 
   return (

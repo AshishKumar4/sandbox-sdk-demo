@@ -1,131 +1,64 @@
 import { useState } from 'react'
-import { Settings, Code, GitBranch, Save, Plus, Trash2, Play } from 'lucide-react'
+import { Settings, GitBranch, Plus } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { useSandbox } from '@/contexts/sandbox-context'
-import type { SandboxEnvironment, StartupScript } from '@/types/sandbox'
+import type { SandboxEnvironment } from '@/types/sandbox'
 
 interface SettingsTabProps {
   sandbox: SandboxEnvironment
 }
 
 export function SettingsTab({ sandbox }: SettingsTabProps) {
-  const { startupScripts, saveStartupScript } = useSandbox()
-  const [isCreateScriptOpen, setIsCreateScriptOpen] = useState(false)
-  const [newScriptName, setNewScriptName] = useState('')
-  const [newScriptDescription, setNewScriptDescription] = useState('')
-  const [newScriptContent, setNewScriptContent] = useState('')
   const [gitRepoUrl, setGitRepoUrl] = useState('')
   const [isCloning, setIsCloning] = useState(false)
 
-  const handleCreateScript = () => {
-    if (!newScriptName.trim() || !newScriptContent.trim()) return
-    
-    const script: StartupScript = {
-      id: `script-${Date.now()}`,
-      name: newScriptName,
-      content: newScriptContent,
-      description: newScriptDescription,
-      createdAt: new Date()
-    }
-    
-    saveStartupScript(script)
-    setNewScriptName('')
-    setNewScriptDescription('')
-    setNewScriptContent('')
-    setIsCreateScriptOpen(false)
-  }
 
   const handleCloneRepo = async () => {
     if (!gitRepoUrl.trim()) return
     
     setIsCloning(true)
     try {
-      // Simulate git clone operation
-      await new Promise(resolve => setTimeout(resolve, 2000))
       console.log('Cloning repository:', gitRepoUrl)
-      // Here you would use the sandbox SDK to clone the repository
+      
+      const response = await fetch(`/api/sandboxes/${sandbox.id}/git/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoUrl: gitRepoUrl,
+          branch: 'main'
+        })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to clone repository')
+      }
+      
+      const apiResponse = await response.json()
+      if (!apiResponse.success) {
+        throw new Error(apiResponse.error || 'Failed to clone repository')
+      }
+      
+      console.log('Repository cloned successfully:', apiResponse.data)
+      // You might want to show a success message or refresh file list here
+      
+    } catch (error) {
+      console.error('Failed to clone repository:', error)
+      // You might want to show an error message to the user
     } finally {
       setIsCloning(false)
       setGitRepoUrl('')
     }
   }
 
-  const defaultScripts = [
-    {
-      name: 'Node.js Express Setup',
-      content: `#!/bin/bash
-# Install Node.js dependencies and start Express server
-npm init -y
-npm install express cors helmet
-cat << 'EOF' > server.js
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
-
-app.get('/', (req, res) => {
-  res.json({ message: 'Hello from Cloudflare Sandbox!' });
-});
-
-app.listen(PORT, () => {
-  console.log(\`Server running on port \${PORT}\`);
-});
-EOF
-node server.js`
-    },
-    {
-      name: 'Python Flask Setup',
-      content: `#!/bin/bash
-# Install Python Flask and start server
-pip install flask flask-cors
-cat << 'EOF' > app.py
-from flask import Flask, jsonify
-from flask_cors import CORS
-
-app = Flask(__name__)
-CORS(app)
-
-@app.route('/')
-def hello():
-    return jsonify({"message": "Hello from Python Flask!"})
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
-EOF
-python app.py`
-    },
-    {
-      name: 'React Development Environment',
-      content: `#!/bin/bash
-# Create React app and start development server
-npx create-react-app my-app --template typescript
-cd my-app
-npm start`
-    }
-  ]
 
   return (
     <div className="p-6">
-      <Tabs defaultValue="startup-scripts" className="space-y-4">
+      <Tabs defaultValue="git-integration" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="startup-scripts" className="flex items-center space-x-2">
-            <Code className="h-4 w-4" />
-            <span>Startup Scripts</span>
-          </TabsTrigger>
           <TabsTrigger value="git-integration" className="flex items-center space-x-2">
             <GitBranch className="h-4 w-4" />
             <span>Git Integration</span>
@@ -135,143 +68,6 @@ npm start`
             <span>General</span>
           </TabsTrigger>
         </TabsList>
-
-        <TabsContent value="startup-scripts" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold">Startup Scripts</h3>
-              <p className="text-sm text-muted-foreground">
-                Create reusable scripts to initialize new sandbox environments
-              </p>
-            </div>
-            <Dialog open={isCreateScriptOpen} onOpenChange={setIsCreateScriptOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="h-4 w-4 mr-1" />
-                  Create Script
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl">
-                <DialogHeader>
-                  <DialogTitle>Create Startup Script</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div>
-                    <Label htmlFor="script-name">Script Name</Label>
-                    <Input
-                      id="script-name"
-                      value={newScriptName}
-                      onChange={(e) => setNewScriptName(e.target.value)}
-                      placeholder="e.g., Node.js Express Setup"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="script-description">Description (Optional)</Label>
-                    <Input
-                      id="script-description"
-                      value={newScriptDescription}
-                      onChange={(e) => setNewScriptDescription(e.target.value)}
-                      placeholder="Brief description of what this script does"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="script-content">Script Content</Label>
-                    <Textarea
-                      id="script-content"
-                      value={newScriptContent}
-                      onChange={(e) => setNewScriptContent(e.target.value)}
-                      placeholder="#!/bin/bash\n# Your startup script here\necho 'Hello World'"
-                      className="font-mono text-sm h-40"
-                    />
-                  </div>
-                  <div className="flex justify-end space-x-2">
-                    <Button variant="outline" onClick={() => setIsCreateScriptOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button onClick={handleCreateScript}>
-                      <Save className="h-4 w-4 mr-1" />
-                      Save Script
-                    </Button>
-                  </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          {/* Default/Template Scripts */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Template Scripts</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {defaultScripts.map((script, index) => (
-                  <div key={index} className="border rounded-lg p-4">
-                    <h4 className="font-medium mb-2">{script.name}</h4>
-                    <div className="text-xs font-mono bg-muted p-2 rounded mb-3 h-20 overflow-y-auto">
-                      {script.content.split('\n').slice(0, 3).join('\n')}...
-                    </div>
-                    <Button size="sm" variant="outline" className="w-full">
-                      Use Template
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Custom Scripts */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Your Scripts ({startupScripts.length})</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {startupScripts.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Code className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No custom scripts yet</p>
-                  <p className="text-sm mt-1">Create your first startup script</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {startupScripts.map((script) => (
-                    <div key={script.id} className="border rounded-lg p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h4 className="font-medium">{script.name}</h4>
-                          {script.description && (
-                            <p className="text-sm text-muted-foreground mt-1">{script.description}</p>
-                          )}
-                          <div className="flex items-center space-x-2 mt-2">
-                            <Badge variant="secondary" className="text-xs">
-                              Created {script.createdAt.toLocaleDateString()}
-                            </Badge>
-                            {script.lastUsed && (
-                              <Badge variant="outline" className="text-xs">
-                                Last used {script.lastUsed.toLocaleDateString()}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Button size="sm" variant="outline">
-                            <Play className="h-3 w-3" />
-                          </Button>
-                          <Button size="sm" variant="outline">
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="text-xs font-mono bg-muted p-2 rounded h-20 overflow-y-auto">
-                        {script.content}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         <TabsContent value="git-integration" className="space-y-4">
           <div>
